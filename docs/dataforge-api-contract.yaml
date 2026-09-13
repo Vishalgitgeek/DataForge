@@ -1,0 +1,612 @@
+openapi: 3.1.0
+info:
+  title: DataForge API
+  version: 1.0.0
+  description: >
+    REST API for authenticated dataset upload, asynchronous processing,
+    deterministic profiling, quality analysis, and bounded analytical queries.
+    The MVP accepts CSV uploads only. XLSX remains a post-MVP format extension.
+    Clients may send X-Request-ID; the API always returns X-Request-ID,
+    propagates it to structured logs and applicable background-job messages,
+    and generates one when the client does not provide it.
+servers:
+  - url: /api/v1
+security:
+  - bearerAuth: []
+tags:
+  - name: Auth
+  - name: Datasets
+  - name: Versions
+  - name: Queries
+paths:
+  /auth/register:
+    parameters:
+      - { $ref: '#/components/parameters/RequestId' }
+    post:
+      tags: [Auth]
+      security: []
+      operationId: register
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RegisterRequest' }
+      responses:
+        '201':
+          description: User registered.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuthResponse' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+  /auth/login:
+    parameters:
+      - { $ref: '#/components/parameters/RequestId' }
+    post:
+      tags: [Auth]
+      security: []
+      operationId: login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LoginRequest' }
+      responses:
+        '200':
+          description: Tokens issued.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuthResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+  /auth/refresh:
+    parameters:
+      - { $ref: '#/components/parameters/RequestId' }
+    post:
+      tags: [Auth]
+      security: []
+      operationId: refresh
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RefreshRequest' }
+      responses:
+        '200':
+          description: Rotated tokens issued.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuthResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /auth/logout:
+    parameters:
+      - { $ref: '#/components/parameters/RequestId' }
+    post:
+      tags: [Auth]
+      operationId: logout
+      responses:
+        '204': { description: Refresh token revoked. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /datasets:
+    parameters:
+      - { $ref: '#/components/parameters/RequestId' }
+    get:
+      tags: [Datasets]
+      operationId: listDatasets
+      parameters:
+        - { $ref: '#/components/parameters/Cursor' }
+        - { $ref: '#/components/parameters/PageSize' }
+      responses:
+        '200':
+          description: Owned datasets.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DatasetPage' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      tags: [Datasets]
+      operationId: createDataset
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateDatasetRequest' }
+      responses:
+        '201':
+          description: Dataset created.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Dataset' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+  /datasets/{dataset_id}:
+    parameters:
+      - { $ref: '#/components/parameters/DatasetId' }
+      - { $ref: '#/components/parameters/RequestId' }
+    get:
+      tags: [Datasets]
+      operationId: getDataset
+      responses:
+        '200':
+          description: Owned dataset.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Dataset' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [Datasets]
+      operationId: deleteDataset
+      responses:
+        '204': { description: Dataset soft-deleted. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /datasets/{dataset_id}/versions:
+    parameters:
+      - { $ref: '#/components/parameters/DatasetId' }
+      - { $ref: '#/components/parameters/RequestId' }
+    get:
+      tags: [Versions]
+      operationId: listVersions
+      parameters:
+        - { $ref: '#/components/parameters/Cursor' }
+        - { $ref: '#/components/parameters/PageSize' }
+      responses:
+        '200':
+          description: Dataset versions.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/VersionPage' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [Versions]
+      operationId: createVersion
+      parameters:
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateVersionRequest' }
+      responses:
+        '201':
+          description: Version created; upload has not started.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Version' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /versions/{version_id}/upload:
+    parameters:
+      - { $ref: '#/components/parameters/VersionId' }
+      - { $ref: '#/components/parameters/RequestId' }
+    post:
+      tags: [Versions]
+      operationId: createUpload
+      parameters:
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UploadRequest' }
+      responses:
+        '200':
+          description: Presigned upload details.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UploadResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '415': { $ref: '#/components/responses/UnsupportedMediaType' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+  /versions/{version_id}/upload-complete:
+    parameters:
+      - { $ref: '#/components/parameters/VersionId' }
+      - { $ref: '#/components/parameters/RequestId' }
+    post:
+      tags: [Versions]
+      operationId: completeUpload
+      parameters:
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      responses:
+        '202':
+          description: Upload verified and processing queued.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProcessingAccepted' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+  /versions/{version_id}/status:
+    parameters:
+      - { $ref: '#/components/parameters/VersionId' }
+      - { $ref: '#/components/parameters/RequestId' }
+    get:
+      tags: [Versions]
+      operationId: getVersionStatus
+      responses:
+        '200':
+          description: Current version and processing status.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/VersionStatus' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /versions/{version_id}/profile:
+    parameters:
+      - { $ref: '#/components/parameters/VersionId' }
+      - { $ref: '#/components/parameters/RequestId' }
+    get:
+      tags: [Versions]
+      operationId: getProfile
+      responses:
+        '200':
+          description: Deterministic dataset profile.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Profile' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/NotReady' }
+  /versions/{version_id}/quality:
+    parameters:
+      - { $ref: '#/components/parameters/VersionId' }
+      - { $ref: '#/components/parameters/RequestId' }
+    get:
+      tags: [Versions]
+      operationId: getQuality
+      responses:
+        '200':
+          description: Quality checks and score.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/QualityReport' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/NotReady' }
+  /versions/{version_id}/analysis:
+    parameters:
+      - { $ref: '#/components/parameters/VersionId' }
+      - { $ref: '#/components/parameters/RequestId' }
+    get:
+      tags: [Versions]
+      operationId: getAnalysis
+      responses:
+        '200':
+          description: Stored deterministic analysis results.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AnalysisReport' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/NotReady' }
+  /versions/{version_id}/query:
+    parameters:
+      - { $ref: '#/components/parameters/VersionId' }
+      - { $ref: '#/components/parameters/RequestId' }
+    post:
+      tags: [Queries]
+      operationId: queryVersion
+      parameters:
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/QueryRequest' }
+      responses:
+        '200':
+          description: Bounded analytical query result.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/QueryResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/NotReady' }
+        '422': { $ref: '#/components/responses/QueryRejected' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+  /versions/{version_id}/query-history:
+    parameters:
+      - { $ref: '#/components/parameters/VersionId' }
+      - { $ref: '#/components/parameters/RequestId' }
+    get:
+      tags: [Queries]
+      operationId: listQueryHistory
+      parameters:
+        - { $ref: '#/components/parameters/Cursor' }
+        - { $ref: '#/components/parameters/PageSize' }
+      responses:
+        '200':
+          description: Query history for the authenticated user.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/QueryHistoryPage' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /versions/{version_id}/retry:
+    parameters:
+      - { $ref: '#/components/parameters/VersionId' }
+      - { $ref: '#/components/parameters/RequestId' }
+    post:
+      tags: [Versions]
+      operationId: retryVersion
+      parameters:
+        - { $ref: '#/components/parameters/RequiredIdempotencyKey' }
+      responses:
+        '202':
+          description: Explicit retry accepted and processing queued.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProcessingAccepted' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  headers:
+    RequestId:
+      description: Effective correlation ID for the request and any related work.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+  parameters:
+    DatasetId: { name: dataset_id, in: path, required: true, schema: { $ref: '#/components/schemas/UUID' } }
+    VersionId: { name: version_id, in: path, required: true, schema: { $ref: '#/components/schemas/UUID' } }
+    RequestId: { name: X-Request-ID, in: header, required: false, description: Client-supplied correlation ID. The API generates one when omitted and returns the effective value in the X-Request-ID response header., schema: { type: string, minLength: 1, maxLength: 128 } }
+    Cursor: { name: cursor, in: query, required: false, schema: { type: string } }
+    PageSize: { name: page_size, in: query, required: false, schema: { type: integer, minimum: 1, maximum: 100, default: 20 } }
+    IdempotencyKey: { name: Idempotency-Key, in: header, required: false, schema: { type: string, maxLength: 255 } }
+    RequiredIdempotencyKey: { name: Idempotency-Key, in: header, required: true, description: Required to make explicit version retries idempotent., schema: { type: string, minLength: 1, maxLength: 255 } }
+  responses:
+    Unauthorized: { description: Authentication required or token invalid., content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+    NotFound: { description: Resource not found or not visible to this user., content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+    Conflict: { description: State or uniqueness conflict., content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+    ValidationError: { description: Invalid request., content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+    PayloadTooLarge: { description: Upload exceeds configured limit., content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+    UnsupportedMediaType: { description: File format is not supported., content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+    NotReady: { description: Processing has not completed., content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+    QueryRejected: { description: Query violates safety or cost rules., content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+    RateLimited: { description: Rate limit exceeded., headers: { Retry-After: { schema: { type: integer } } }, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+  schemas:
+    UUID: { type: string, format: uuid }
+    Timestamp: { type: string, format: date-time }
+    RegisterRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email: { type: string, format: email }
+        password: { type: string, minLength: 12, writeOnly: true }
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email: { type: string, format: email }
+        password: { type: string, writeOnly: true }
+    RefreshRequest:
+      type: object
+      required: [refresh_token]
+      properties:
+        refresh_token: { type: string, writeOnly: true }
+    AuthResponse:
+      type: object
+      required: [access_token, refresh_token, token_type, expires_in]
+      properties:
+        access_token: { type: string }
+        refresh_token: { type: string }
+        token_type: { type: string, enum: [bearer] }
+        expires_in: { type: integer, minimum: 1 }
+    CreateDatasetRequest:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 255 }
+        description: { type: [string, 'null'], maxLength: 2000 }
+    Dataset:
+      type: object
+      required: [id, name, created_at, updated_at]
+      properties:
+        id: { $ref: '#/components/schemas/UUID' }
+        name: { type: string }
+        description: { type: [string, 'null'] }
+        created_at: { $ref: '#/components/schemas/Timestamp' }
+        updated_at: { $ref: '#/components/schemas/Timestamp' }
+    CreateVersionRequest:
+      type: object
+      required: [filename, content_type, byte_size]
+      properties:
+        filename: { type: string, minLength: 1, maxLength: 255 }
+        content_type: { type: string, enum: [text/csv], description: MVP supports CSV. XLSX is a post-MVP extension. }
+        byte_size: { type: integer, minimum: 1 }
+    UploadRequest:
+      type: object
+      required: [filename, content_type, byte_size]
+      properties:
+        filename: { type: string }
+        content_type: { type: string, enum: [text/csv], description: MVP supports CSV. XLSX is a post-MVP extension. }
+        byte_size: { type: integer, minimum: 1 }
+    UploadResponse:
+      type: object
+      required: [upload_url, object_key, expires_at]
+      properties:
+        upload_url: { type: string, format: uri }
+        object_key: { type: string }
+        expires_at: { $ref: '#/components/schemas/Timestamp' }
+        headers: { type: object, additionalProperties: { type: string } }
+    Version:
+      type: object
+      required: [id, dataset_id, version_number, status, created_at]
+      properties:
+        id: { $ref: '#/components/schemas/UUID' }
+        dataset_id: { $ref: '#/components/schemas/UUID' }
+        version_number: { type: integer, minimum: 1 }
+        status:
+          type: string
+          enum: [CREATED, UPLOADING, UPLOADED, QUEUED, PROCESSING, COMPLETED, FAILED]
+        created_at: { $ref: '#/components/schemas/Timestamp' }
+        updated_at: { $ref: '#/components/schemas/Timestamp' }
+    ProcessingAccepted:
+      type: object
+      required: [version, job_id]
+      properties:
+        version: { $ref: '#/components/schemas/Version' }
+        job_id: { $ref: '#/components/schemas/UUID' }
+    VersionStatus:
+      type: object
+      required: [version, jobs]
+      properties:
+        version: { $ref: '#/components/schemas/Version' }
+        jobs: { type: array, items: { $ref: '#/components/schemas/Job' } }
+    Job:
+      type: object
+      required: [id, job_type, status, attempt_count, max_attempts]
+      properties:
+        id: { $ref: '#/components/schemas/UUID' }
+        job_type: { type: string, example: profile_dataset }
+        status: { type: string, enum: [PENDING, RUNNING, RETRYING, COMPLETED, FAILED, CANCELLED] }
+        attempt_count: { type: integer, minimum: 0 }
+        max_attempts: { type: integer, minimum: 1 }
+        failure_code: { type: [string, 'null'] }
+        failure_message: { type: [string, 'null'] }
+        queued_at: { $ref: '#/components/schemas/Timestamp' }
+        completed_at: { type: [string, 'null'], format: date-time }
+    Profile:
+      type: object
+      required: [version_id, row_count, column_count, columns, computed_at]
+      properties:
+        version_id: { $ref: '#/components/schemas/UUID' }
+        row_count: { type: integer, minimum: 0 }
+        column_count: { type: integer, minimum: 0 }
+        duplicate_row_count: { type: integer, minimum: 0 }
+        columns: { type: array, items: { $ref: '#/components/schemas/ColumnProfile' } }
+        computed_at: { $ref: '#/components/schemas/Timestamp' }
+    ColumnProfile:
+      type: object
+      required: [name, inferred_type, null_count, unique_count]
+      properties:
+        name: { type: string }
+        inferred_type: { type: string, enum: [INTEGER, DECIMAL, BOOLEAN, DATETIME, TEXT, UNKNOWN] }
+        null_count: { type: integer, minimum: 0 }
+        unique_count: { type: [integer, 'null'], minimum: 0 }
+        uniqueness_ratio: { type: [number, 'null'], minimum: 0, maximum: 1 }
+        sample_values: { type: array, items: {} }
+        statistics: { type: object, additionalProperties: true }
+    QualityReport:
+      type: object
+      required: [version_id, score, checks]
+      properties:
+        version_id: { $ref: '#/components/schemas/UUID' }
+        score: { type: number, minimum: 0, maximum: 100 }
+        checks: { type: array, items: { $ref: '#/components/schemas/QualityCheck' } }
+    QualityCheck:
+      type: object
+      required: [check_type, status]
+      properties:
+        check_type: { type: string }
+        status: { type: string, enum: [PASS, WARN, FAIL] }
+        score: { type: [number, 'null'] }
+        affected_rows: { type: [integer, 'null'], minimum: 0 }
+        details: { type: object, additionalProperties: true }
+    AnalysisReport:
+      type: object
+      required: [version_id, results]
+      properties:
+        version_id: { $ref: '#/components/schemas/UUID' }
+        results: { type: array, items: { type: object, additionalProperties: true } }
+    QueryRequest:
+      type: object
+      required: [metrics]
+      additionalProperties: false
+      properties:
+        dimensions: { type: array, maxItems: 10, items: { type: string } }
+        metrics: { type: array, minItems: 1, maxItems: 10, items: { type: string } }
+        filters: { type: object, additionalProperties: true }
+        sort: { type: array, maxItems: 5, items: { type: string } }
+        limit: { type: integer, minimum: 1, maximum: 1000, default: 100 }
+    QueryResponse:
+      type: object
+      required: [columns, rows, row_count, duration_ms]
+      properties:
+        columns: { type: array, items: { type: string } }
+        rows: { type: array, items: { type: array, items: {} } }
+        row_count: { type: integer, minimum: 0 }
+        duration_ms: { type: integer, minimum: 0 }
+    QueryHistoryItem:
+      type: object
+      required: [id, version_id, status, created_at]
+      properties:
+        id: { $ref: '#/components/schemas/UUID' }
+        version_id: { $ref: '#/components/schemas/UUID' }
+        status: { type: string, enum: [SUCCEEDED, REJECTED, FAILED] }
+        duration_ms: { type: [integer, 'null'], minimum: 0 }
+        error_code: { type: [string, 'null'] }
+        created_at: { $ref: '#/components/schemas/Timestamp' }
+    PageInfo:
+      type: object
+      required: [has_more]
+      properties:
+        next_cursor: { type: [string, 'null'] }
+        has_more: { type: boolean }
+    DatasetPage:
+      type: object
+      required: [items, page_info]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/Dataset' } }
+        page_info: { $ref: '#/components/schemas/PageInfo' }
+    VersionPage:
+      type: object
+      required: [items, page_info]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/Version' } }
+        page_info: { $ref: '#/components/schemas/PageInfo' }
+    QueryHistoryPage:
+      type: object
+      required: [items, page_info]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/QueryHistoryItem' } }
+        page_info: { $ref: '#/components/schemas/PageInfo' }
+    Error:
+      type: object
+      required: [error, request_id]
+      properties:
+        error:
+          type: object
+          required: [code, message, retryable]
+          properties:
+            code:
+              type: string
+              enum:
+                - validation_error
+                - unsupported_file_type
+                - file_too_large
+                - authentication_required
+                - invalid_credentials
+                - token_expired
+                - forbidden
+                - resource_not_found
+                - conflict
+                - invalid_state_transition
+                - version_not_ready
+                - query_rejected
+                - rate_limited
+                - storage_unavailable
+                - database_unavailable
+                - queue_unavailable
+                - processing_failed_permanent
+                - processing_retry_exhausted
+                - internal_error
+              example: validation_error
+            message: { type: string }
+            details: { type: object, additionalProperties: true }
+            retryable: { type: boolean, description: Whether the client may retry according to the error model policy. }
+        request_id: { type: string, description: Effective X-Request-ID value. }
