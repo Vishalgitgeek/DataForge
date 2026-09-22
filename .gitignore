@@ -43,3 +43,4 @@ target/
 .gradle/
 bin/
 obj/
+requirements-dev.txt
