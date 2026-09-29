@@ -118,7 +118,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Dataset' }
         '401': { $ref: '#/components/responses/Unauthorized' }
-        '409': { $ref: '#/components/responses/Conflict' }
+        '409': { $ref: '#/components/responses/DatasetNameConflict' }
         '422': { $ref: '#/components/responses/ValidationError' }
   /datasets/{dataset_id}:
     parameters:
@@ -372,6 +372,17 @@ components:
     Unauthorized: { description: Authentication required or token invalid., content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
     NotFound: { description: Resource not found or not visible to this user., content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
     Conflict: { description: State or uniqueness conflict., content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+    DatasetNameConflict:
+      description: An active dataset with this name already exists for the authenticated owner. Do not retry automatically.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example:
+            error:
+              code: conflict
+              message: An active dataset with this name already exists.
+              retryable: false
+            request_id: req_01JEXAMPLE
     ValidationError: { description: Invalid request., content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
     PayloadTooLarge: { description: Upload exceeds configured limit., content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
     UnsupportedMediaType: { description: File format is not supported., content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }

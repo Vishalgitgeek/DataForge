@@ -1,5 +1,6 @@
 from collections.abc import AsyncGenerator
 
+from fastapi import Request
 from sqlalchemy import text
 from sqlalchemy.orm import DeclarativeBase
 from sqlalchemy.ext.asyncio import (
@@ -24,9 +25,8 @@ class Base(DeclarativeBase):
     pass
 
 
-async def get_db_session() -> AsyncGenerator[AsyncSession, None]:
-    async with session_factory() as session:
-        yield session
+async def get_db_session(request: Request) -> AsyncGenerator[AsyncSession, None]:
+    yield request.state.db_session
 
 
 async def check_database() -> None:

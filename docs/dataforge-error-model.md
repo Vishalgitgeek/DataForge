@@ -57,6 +57,11 @@ mutating commands; it is not a correlation ID.
 The API may use a generic `resource_not_found` response for resources not
 owned by the caller to avoid leaking whether another user's identifier exists.
 
+Creating a dataset with a name that matches an active dataset owned by the
+same user returns HTTP `409` with code `conflict` and
+`retryable: false`. The client should choose another name or resolve the
+existing dataset; it should not automatically retry the same request.
+
 ## Processing failure categories
 
 ### Non-retryable
