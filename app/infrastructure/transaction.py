@@ -7,6 +7,10 @@ from app.core.errors import DatasetNameConflictError
 from app.infrastructure.errors import is_dataset_name_conflict
 
 
+def mark_transaction_commit_on_error(request: Request) -> None:
+    request.state.commit_on_error = True
+
+
 async def transaction_middleware(
     request: Request,
     call_next: RequestResponseEndpoint,
@@ -21,7 +25,11 @@ async def transaction_middleware(
             await session.rollback()
             raise
 
-        if response.status_code >= 400:
+        if response.status_code >= 400 and not getattr(
+            request.state,
+            "commit_on_error",
+            False,
+        ):
             await session.rollback()
             return response
 

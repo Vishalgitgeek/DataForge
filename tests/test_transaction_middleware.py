@@ -5,7 +5,10 @@ from starlette.responses import Response
 
 from app.core.errors import DatasetNameConflictError
 from app.infrastructure import database
-from app.infrastructure.transaction import transaction_middleware
+from app.infrastructure.transaction import (
+    mark_transaction_commit_on_error,
+    transaction_middleware,
+)
 
 
 def make_request() -> Request:  
@@ -202,6 +205,64 @@ async def test_transaction_middleware_rolls_back_handled_conflict_response(
     assert sessions[0].rollback_count == 1
     assert sessions[0].closed is True
     assert sessions[0].events == ["downstream", "rollback", "close"]
+
+
+@pytest.mark.anyio
+async def test_transaction_middleware_rolls_back_server_error_response(
+    monkeypatch,
+) -> None:
+    sessions = install_session_factory(monkeypatch)
+
+    async def downstream(_: Request) -> Response:
+        return Response(status_code=503)
+
+    response = await transaction_middleware(make_request(), downstream)
+
+    assert response.status_code == 503
+    assert sessions[0].committed is False
+    assert sessions[0].rollback_count == 1
+    assert sessions[0].closed is True
+    assert sessions[0].events == ["rollback", "close"]
+
+
+@pytest.mark.anyio
+async def test_transaction_middleware_commits_marked_unauthorized_response(
+    monkeypatch,
+) -> None:
+    sessions = install_session_factory(monkeypatch)
+
+    async def downstream(request: Request) -> Response:
+        mark_transaction_commit_on_error(request)
+        return Response(status_code=401)
+
+    response = await transaction_middleware(make_request(), downstream)
+
+    assert response.status_code == 401
+    assert sessions[0].committed is True
+    assert sessions[0].rollback_count == 0
+    assert sessions[0].closed is True
+    assert sessions[0].events == ["commit", "close"]
+
+
+@pytest.mark.anyio
+async def test_transaction_middleware_propagates_marked_error_commit_failure(
+    monkeypatch,
+) -> None:
+    commit_error = RuntimeError("commit failed")
+    sessions = install_session_factory(monkeypatch, commit_error=commit_error)
+
+    async def downstream(request: Request) -> Response:
+        mark_transaction_commit_on_error(request)
+        return Response(status_code=401)
+
+    with pytest.raises(RuntimeError) as caught:
+        await transaction_middleware(make_request(), downstream)
+
+    assert caught.value is commit_error
+    assert sessions[0].committed is False
+    assert sessions[0].rollback_count == 1
+    assert sessions[0].closed is True
+    assert sessions[0].events == ["commit", "rollback", "close"]
 
 
 @pytest.mark.anyio

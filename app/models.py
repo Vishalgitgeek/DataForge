@@ -79,6 +79,7 @@ class RefreshToken(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    family_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, default=uuid.uuid4)
     token_hash: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -88,6 +89,7 @@ class RefreshToken(Base):
 
     __table_args__ = (
         Index("ix_refresh_tokens_user_revoked_expires", "user_id", "revoked_at", "expires_at"),
+        Index("ix_refresh_tokens_family_revoked", "family_id", "revoked_at"),
     )
 
 
