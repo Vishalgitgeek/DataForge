@@ -36,7 +36,7 @@ paths:
           description: User registered.
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/AuthResponse' }
+              schema: { $ref: '#/components/schemas/RegistrationResponse' }
         '409': { $ref: '#/components/responses/Conflict' }
         '422': { $ref: '#/components/responses/ValidationError' }
   /auth/login:
@@ -409,6 +409,13 @@ components:
       required: [refresh_token]
       properties:
         refresh_token: { type: string, writeOnly: true }
+    RegistrationResponse:
+      type: object
+      required: [id, email, created_at]
+      properties:
+        id: { $ref: '#/components/schemas/UUID' }
+        email: { type: string, format: email }
+        created_at: { $ref: '#/components/schemas/Timestamp' }
     AuthResponse:
       type: object
       required: [access_token, refresh_token, token_type, expires_in]
