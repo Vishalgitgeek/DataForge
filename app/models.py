@@ -147,6 +147,12 @@ class DatasetVersion(Base):
     __table_args__ = (
         Index("uq_dataset_versions_dataset_number", "dataset_id", "version_number", unique=True),
         Index("ix_dataset_versions_dataset_created", "dataset_id", "created_at"),
+        Index(
+            "ix_dataset_versions_dataset_created_id",
+            "dataset_id",
+            created_at.desc(),
+            id.desc(),
+        ),
     )
 
 

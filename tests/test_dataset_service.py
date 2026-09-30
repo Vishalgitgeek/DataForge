@@ -7,12 +7,18 @@ from sqlalchemy.exc import IntegrityError
 
 from app.core.dataset_cursor import decode_dataset_cursor, encode_dataset_cursor
 from app.core.errors import DatasetNameConflictError, ResourceNotFoundError
-from app.models import Dataset, DatasetVersionStatus
-from app.schemas.dataset import CreateDatasetRequest, CreateVersionRequest, DatasetPage
+from app.models import Dataset, DatasetVersion, DatasetVersionStatus
+from app.schemas.dataset import (
+    CreateDatasetRequest,
+    CreateVersionRequest,
+    DatasetPage,
+    VersionPage,
+)
 from app.services.dataset import (
     create_dataset,
     create_dataset_version,
     get_dataset,
+    list_dataset_versions,
     list_datasets,
     soft_delete_dataset,
 )
@@ -224,6 +230,84 @@ async def test_create_dataset_version_raises_not_found_without_inserting() -> No
             ),
         )
     assert session.added == []
+
+
+@pytest.mark.anyio
+async def test_list_dataset_versions_scopes_dataset_and_applies_keyset_page() -> None:
+    dataset_id = uuid4()
+    owner_id = uuid4()
+    created_at = datetime(2026, 10, 1, tzinfo=UTC)
+    version_rows = [
+        DatasetVersion(
+            id=UUID(int=3),
+            dataset_id=dataset_id,
+            version_number=3,
+            status=DatasetVersionStatus.CREATED,
+            created_at=created_at,
+            updated_at=created_at,
+        ),
+        DatasetVersion(
+            id=UUID(int=2),
+            dataset_id=dataset_id,
+            version_number=2,
+            status=DatasetVersionStatus.CREATED,
+            created_at=created_at,
+            updated_at=created_at,
+        ),
+    ]
+    statements = []
+    scalar_calls = 0
+
+    class ScalarResult:
+        def all(self):
+            return version_rows
+
+    class FakeSession:
+        async def scalar(self, statement):
+            nonlocal scalar_calls
+            scalar_calls += 1
+            statements.append(statement)
+            return Dataset(id=dataset_id, owner_id=owner_id, name="Sales")
+
+        async def scalars(self, statement):
+            statements.append(statement)
+            return ScalarResult()
+
+    cursor = (created_at, UUID(int=4))
+    page = await list_dataset_versions(
+        FakeSession(),
+        dataset_id,
+        owner_id,
+        1,
+        cursor,
+    )
+
+    assert scalar_calls == 1
+    statement = statements[1]
+    sql = str(statement.compile(dialect=postgresql.dialect()))
+    assert "dataset_versions.dataset_id" in sql
+    assert "dataset_versions.created_at <" in sql
+    assert "dataset_versions.id <" in sql
+    assert "ORDER BY dataset_versions.created_at DESC, dataset_versions.id DESC" in sql
+    assert "LIMIT" in sql
+    assert isinstance(page, VersionPage)
+    assert [item.id for item in page.items] == [UUID(int=3)]
+    assert page.page_info.has_more is True
+    assert page.page_info.next_cursor is not None
+    assert decode_dataset_cursor(page.page_info.next_cursor) == (
+        created_at,
+        UUID(int=3),
+    )
+
+
+@pytest.mark.anyio
+async def test_list_dataset_versions_raises_not_found_for_unavailable_dataset() -> None:
+    class FakeSession:
+        async def scalar(self, _statement):
+            return None
+
+    with pytest.raises(ResourceNotFoundError):
+        await list_dataset_versions(FakeSession(), uuid4(), uuid4(), 20, None)
 
 
 def test_dataset_cursor_round_trips_timestamp_and_id_canonically() -> None:

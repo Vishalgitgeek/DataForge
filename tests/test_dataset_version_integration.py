@@ -340,3 +340,192 @@ async def test_version_creation_concurrency_is_per_dataset_and_sequential(
             await blocker.close()
         await _remove_version_test_data(session_factory, dataset_ids, [owner_id])
         await engine.dispose()
+
+
+@pytest.mark.anyio
+async def test_list_dataset_versions_owner_scope_cursor_pages_and_equal_timestamp_order(
+    monkeypatch,
+) -> None:
+    database_url = _test_database_url()
+    engine = create_async_engine(database_url)
+    session_factory = async_sessionmaker(bind=engine, expire_on_commit=False)
+    monkeypatch.setattr(database, "session_factory", session_factory)
+
+    owner_id = uuid4()
+    other_owner_id = uuid4()
+    dataset_id = uuid4()
+    deleted_dataset_id = uuid4()
+    foreign_dataset_id = uuid4()
+    empty_dataset_id = uuid4()
+    version_ids = [UUID(int=value) for value in (50, 40, 30, 20, 10, 100)]
+    same_timestamp = datetime(2026, 10, 1, 4, 0, tzinfo=UTC)
+    owner_for_request = owner_id
+    monkeypatch.setitem(
+        app.dependency_overrides,
+        get_authenticated_user_id,
+        lambda: owner_for_request,
+    )
+    dataset_ids = [
+        dataset_id,
+        deleted_dataset_id,
+        foreign_dataset_id,
+        empty_dataset_id,
+    ]
+
+    async def cleanup() -> None:
+        async with session_factory() as session:
+            await session.execute(
+                delete(DatasetVersion).where(DatasetVersion.id.in_(version_ids))
+            )
+            await session.execute(delete(Dataset).where(Dataset.id.in_(dataset_ids)))
+            await session.execute(
+                delete(User).where(User.id.in_([owner_id, other_owner_id]))
+            )
+            await session.commit()
+
+    try:
+        await cleanup()
+        async with session_factory() as session:
+            session.add_all(
+                [
+                    User(
+                        id=owner_id,
+                        email=f"version-list-owner-{owner_id.hex}@example.test",
+                        password_hash="integration-test-only",
+                    ),
+                    User(
+                        id=other_owner_id,
+                        email=f"version-list-other-{other_owner_id.hex}@example.test",
+                        password_hash="integration-test-only",
+                    ),
+                ]
+            )
+            session.add_all(
+                [
+                    Dataset(
+                        id=dataset_id,
+                        owner_id=owner_id,
+                        name="Version listing target",
+                    ),
+                    Dataset(
+                        id=deleted_dataset_id,
+                        owner_id=owner_id,
+                        name="Version listing deleted",
+                        deleted_at=same_timestamp,
+                    ),
+                    Dataset(
+                        id=foreign_dataset_id,
+                        owner_id=other_owner_id,
+                        name="Version listing foreign",
+                    ),
+                    Dataset(
+                        id=empty_dataset_id,
+                        owner_id=owner_id,
+                        name="Version listing empty",
+                    ),
+                ]
+            )
+            session.add_all(
+                [
+                    DatasetVersion(
+                        id=version_id,
+                        dataset_id=dataset_id,
+                        version_number=index + 1,
+                        status="CREATED",
+                        created_at=same_timestamp,
+                        updated_at=same_timestamp,
+                    )
+                    for index, version_id in enumerate(version_ids[:5])
+                ]
+                + [
+                    DatasetVersion(
+                        id=version_ids[5],
+                        dataset_id=foreign_dataset_id,
+                        version_number=1,
+                        status="CREATED",
+                        created_at=same_timestamp,
+                        updated_at=same_timestamp,
+                    )
+                ]
+            )
+            await session.commit()
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            first_page = await client.get(
+                f"/api/v1/datasets/{dataset_id}/versions",
+                params={"page_size": 2},
+            )
+            assert first_page.status_code == 200
+            assert [
+                UUID(item["id"]) for item in first_page.json()["items"]
+            ] == version_ids[:2]
+            first_cursor = first_page.json()["page_info"]["next_cursor"]
+            assert first_page.json()["page_info"]["has_more"] is True
+            assert first_cursor
+
+            second_page = await client.get(
+                f"/api/v1/datasets/{dataset_id}/versions",
+                params={"page_size": 2, "cursor": first_cursor},
+            )
+            assert second_page.status_code == 200
+            assert [
+                UUID(item["id"]) for item in second_page.json()["items"]
+            ] == version_ids[2:4]
+            second_cursor = second_page.json()["page_info"]["next_cursor"]
+            assert second_page.json()["page_info"]["has_more"] is True
+            assert second_cursor
+
+            final_page = await client.get(
+                f"/api/v1/datasets/{dataset_id}/versions",
+                params={"page_size": 2, "cursor": second_cursor},
+            )
+            assert final_page.status_code == 200
+            assert [
+                UUID(item["id"]) for item in final_page.json()["items"]
+            ] == version_ids[4:5]
+            assert final_page.json()["page_info"] == {
+                "next_cursor": None,
+                "has_more": False,
+            }
+
+            empty_page = await client.get(
+                f"/api/v1/datasets/{empty_dataset_id}/versions"
+            )
+            assert empty_page.status_code == 200
+            assert empty_page.json() == {
+                "items": [],
+                "page_info": {"next_cursor": None, "has_more": False},
+            }
+
+            missing_response = await client.get(
+                "/api/v1/datasets/99999999-9999-4999-8999-999999999999/versions"
+            )
+            deleted_response = await client.get(
+                f"/api/v1/datasets/{deleted_dataset_id}/versions"
+            )
+            foreign_response = await client.get(
+                f"/api/v1/datasets/{foreign_dataset_id}/versions"
+            )
+            del app.dependency_overrides[get_authenticated_user_id]
+            unauthenticated_response = await client.get(
+                f"/api/v1/datasets/{dataset_id}/versions"
+            )
+
+        expected_not_found = {
+            "code": "resource_not_found",
+            "message": "The requested resource was not found.",
+            "retryable": False,
+        }
+        for response in (missing_response, deleted_response, foreign_response):
+            assert response.status_code == 404
+            assert response.json()["error"] == expected_not_found
+        assert unauthenticated_response.status_code == 401
+        assert unauthenticated_response.json()["error"]["code"] == (
+            "authentication_required"
+        )
+    finally:
+        await cleanup()
+        await engine.dispose()

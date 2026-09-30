@@ -12,12 +12,14 @@ from app.schemas.dataset import (
     CreateVersionRequest,
     DatasetPage,
     DatasetResponse,
+    VersionPage,
     VersionResponse,
 )
 from app.services.dataset import (
     create_dataset,
     create_dataset_version,
     get_dataset,
+    list_dataset_versions,
     list_datasets,
     soft_delete_dataset,
 )
@@ -100,6 +102,41 @@ async def create_dataset_version_route(
         request,
     )
     return VersionResponse.model_validate(version)
+
+
+@router.get(
+    "/{dataset_id}/versions",
+    operation_id="listVersions",
+    response_model=VersionPage,
+)
+async def list_dataset_versions_route(
+    dataset_id: UUID,
+    page_size: int = Query(default=20, ge=1, le=100),
+    cursor: str | None = Query(default=None),
+    db_session: AsyncSession = Depends(get_db_session),
+    owner_id: UUID = Depends(get_authenticated_user_id),
+) -> VersionPage:
+    try:
+        decoded_cursor = decode_dataset_cursor(cursor) if cursor is not None else None
+    except ValueError as error:
+        raise RequestValidationError(
+            [
+                {
+                    "type": "value_error",
+                    "loc": ("query", "cursor"),
+                    "msg": "Invalid cursor.",
+                    "input": cursor,
+                }
+            ]
+        ) from error
+
+    return await list_dataset_versions(
+        db_session,
+        dataset_id,
+        owner_id,
+        page_size,
+        decoded_cursor,
+    )
 
 
 @router.post(

@@ -64,3 +64,8 @@ class VersionResponse(BaseModel):
     ]
     created_at: AwareDatetime
     updated_at: AwareDatetime
+
+
+class VersionPage(BaseModel):
+    items: list[VersionResponse]
+    page_info: PageInfo

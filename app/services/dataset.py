@@ -15,6 +15,8 @@ from app.schemas.dataset import (
     DatasetPage,
     DatasetResponse,
     PageInfo,
+    VersionPage,
+    VersionResponse,
 )
 
 
@@ -85,6 +87,56 @@ async def create_dataset_version(
     db_session.add(version)
     await db_session.flush()
     return version
+
+
+async def list_dataset_versions(
+    db_session: AsyncSession,
+    dataset_id: UUID,
+    owner_id: UUID,
+    page_size: int,
+    cursor: tuple[datetime, UUID] | None,
+) -> VersionPage:
+    dataset = await db_session.scalar(
+        select(Dataset).where(
+            Dataset.id == dataset_id,
+            Dataset.owner_id == owner_id,
+            Dataset.deleted_at.is_(None),
+        )
+    )
+    if dataset is None:
+        raise ResourceNotFoundError()
+
+    statement = select(DatasetVersion).where(
+        DatasetVersion.dataset_id == dataset_id
+    )
+    if cursor is not None:
+        cursor_created_at, cursor_id = cursor
+        statement = statement.where(
+            or_(
+                DatasetVersion.created_at < cursor_created_at,
+                (DatasetVersion.created_at == cursor_created_at)
+                & (DatasetVersion.id < cursor_id),
+            )
+        )
+
+    result = await db_session.scalars(
+        statement.order_by(
+            DatasetVersion.created_at.desc(),
+            DatasetVersion.id.desc(),
+        ).limit(page_size + 1)
+    )
+    rows = list(result.all())
+    has_more = len(rows) > page_size
+    items = rows[:page_size]
+    next_cursor = None
+    if has_more:
+        last_item = items[-1]
+        next_cursor = encode_dataset_cursor(last_item.created_at, last_item.id)
+
+    return VersionPage(
+        items=[VersionResponse.model_validate(version) for version in items],
+        page_info=PageInfo(next_cursor=next_cursor, has_more=has_more),
+    )
 
 
 async def list_datasets(

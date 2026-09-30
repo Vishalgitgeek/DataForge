@@ -6,7 +6,7 @@ from fastapi.testclient import TestClient
 
 from app.api import dependencies
 from app.api.routes import datasets
-from app.schemas.dataset import DatasetPage, PageInfo
+from app.schemas.dataset import DatasetPage, PageInfo, VersionPage
 from app.infrastructure import database
 from app.main import app
 from app.models import Dataset, DatasetVersion, DatasetVersionStatus
@@ -362,6 +362,191 @@ def test_create_dataset_version_route_rejects_unauthenticated_request(
                 "byte_size": 42,
             },
         )
+
+    assert response.status_code == 401
+    assert response.json()["error"]["code"] == "authentication_required"
+
+
+def test_list_dataset_versions_route_returns_owned_version_page(monkeypatch) -> None:
+    dataset_id = uuid4()
+    owner_id = uuid4()
+    now = datetime.now(UTC)
+    version = DatasetVersion(
+        id=uuid4(),
+        dataset_id=dataset_id,
+        version_number=1,
+        status=DatasetVersionStatus.CREATED,
+        created_at=now,
+        updated_at=now,
+    )
+    calls = []
+
+    class FakeSession:
+        async def commit(self) -> None:
+            pass
+
+        async def rollback(self) -> None:
+            pass
+
+        async def close(self) -> None:
+            pass
+
+    async def authenticated_user() -> UUID:
+        return owner_id
+
+    async def service_stub(
+        session,
+        passed_dataset_id,
+        passed_owner_id,
+        page_size,
+        cursor,
+    ):
+        calls.append(
+            (session, passed_dataset_id, passed_owner_id, page_size, cursor)
+        )
+        return VersionPage(
+            items=[
+                {
+                    "id": version.id,
+                    "dataset_id": version.dataset_id,
+                    "version_number": version.version_number,
+                    "status": version.status,
+                    "created_at": now,
+                    "updated_at": now,
+                }
+            ],
+            page_info={"has_more": False},
+        )
+
+    monkeypatch.setattr(database, "session_factory", FakeSession)
+    monkeypatch.setitem(
+        app.dependency_overrides,
+        dependencies.get_authenticated_user_id,
+        authenticated_user,
+    )
+    monkeypatch.setattr(datasets, "list_dataset_versions", service_stub)
+
+    with TestClient(app) as client:
+        response = client.get(f"/api/v1/datasets/{dataset_id}/versions")
+
+    assert response.status_code == 200
+    assert response.json()["items"][0]["id"] == str(version.id)
+    assert response.json()["page_info"] == {
+        "next_cursor": None,
+        "has_more": False,
+    }
+    assert calls[0][1:] == (dataset_id, owner_id, 20, None)
+
+
+@pytest.mark.parametrize("page_size", [1, 100])
+def test_list_dataset_versions_route_accepts_page_size_bounds(
+    monkeypatch,
+    page_size: int,
+) -> None:
+    class FakeSession:
+        async def commit(self) -> None:
+            pass
+
+        async def rollback(self) -> None:
+            pass
+
+        async def close(self) -> None:
+            pass
+
+    async def service_stub(*_args):
+        return VersionPage(items=[], page_info={"has_more": False})
+
+    monkeypatch.setattr(database, "session_factory", FakeSession)
+    monkeypatch.setitem(
+        app.dependency_overrides,
+        dependencies.get_authenticated_user_id,
+        lambda: uuid4(),
+    )
+    monkeypatch.setattr(datasets, "list_dataset_versions", service_stub)
+
+    with TestClient(app) as client:
+        response = client.get(
+            f"/api/v1/datasets/{uuid4()}/versions?page_size={page_size}"
+        )
+
+    assert response.status_code == 200
+
+
+@pytest.mark.parametrize("page_size", [0, 101])
+def test_list_dataset_versions_route_rejects_invalid_page_size(
+    monkeypatch,
+    page_size: int,
+) -> None:
+    class FakeSession:
+        async def commit(self) -> None:
+            pass
+
+        async def rollback(self) -> None:
+            pass
+
+        async def close(self) -> None:
+            pass
+
+    monkeypatch.setattr(database, "session_factory", FakeSession)
+    monkeypatch.setitem(
+        app.dependency_overrides,
+        dependencies.get_authenticated_user_id,
+        lambda: uuid4(),
+    )
+
+    with TestClient(app) as client:
+        response = client.get(
+            f"/api/v1/datasets/{uuid4()}/versions?page_size={page_size}"
+        )
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "validation_error"
+
+
+def test_list_dataset_versions_route_rejects_invalid_cursor(monkeypatch) -> None:
+    class FakeSession:
+        async def commit(self) -> None:
+            pass
+
+        async def rollback(self) -> None:
+            pass
+
+        async def close(self) -> None:
+            pass
+
+    monkeypatch.setattr(database, "session_factory", FakeSession)
+    monkeypatch.setitem(
+        app.dependency_overrides,
+        dependencies.get_authenticated_user_id,
+        lambda: uuid4(),
+    )
+
+    with TestClient(app) as client:
+        response = client.get(
+            f"/api/v1/datasets/{uuid4()}/versions?cursor=invalid"
+        )
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "validation_error"
+
+
+def test_list_dataset_versions_route_rejects_unauthenticated_request(
+    monkeypatch,
+) -> None:
+    class FakeSession:
+        async def commit(self) -> None:
+            raise AssertionError("authentication errors must not commit")
+
+        async def rollback(self) -> None:
+            pass
+
+        async def close(self) -> None:
+            pass
+
+    monkeypatch.setattr(database, "session_factory", FakeSession)
+
+    with TestClient(app) as client:
+        response = client.get(f"/api/v1/datasets/{uuid4()}/versions")
 
     assert response.status_code == 401
     assert response.json()["error"]["code"] == "authentication_required"
