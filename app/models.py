@@ -109,6 +109,13 @@ class Dataset(Base):
 
     __table_args__ = (
         Index("uq_datasets_active_owner_name", "owner_id", text("lower(name)"), unique=True, postgresql_where="deleted_at IS NULL"),
+        Index(
+            "ix_datasets_active_owner_created_id",
+            "owner_id",
+            created_at.desc(),
+            id.desc(),
+            postgresql_where=text("deleted_at IS NULL"),
+        ),
     )
 
 

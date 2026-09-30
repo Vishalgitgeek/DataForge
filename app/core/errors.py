@@ -8,6 +8,16 @@ class DatasetNameConflictError(Exception):
         super().__init__(self.message)
 
 
+class ResourceNotFoundError(Exception):
+    status_code = 404
+    code = "resource_not_found"
+    retryable = False
+    message = "The requested resource was not found."
+
+    def __init__(self) -> None:
+        super().__init__(self.message)
+
+
 class UserEmailConflictError(Exception):
     status_code = 409
     code = "conflict"

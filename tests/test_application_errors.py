@@ -32,7 +32,7 @@ def test_dataset_name_conflict_handler_returns_documented_error_envelope(
     monkeypatch.setattr(database, "session_factory", FakeSession)
     monkeypatch.setitem(
         app.dependency_overrides,
-        dependencies.get_authenticated_owner_id,
+        dependencies.get_authenticated_user_id,
         lambda: "f1a7ef14-7a92-4705-9971-33060da8ba3b",
     )
 

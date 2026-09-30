@@ -64,6 +64,10 @@ Represents the logical dataset owned by a user.
 Unique active name per owner can be enforced with a partial unique index on
 `(owner_id, lower(name)) where deleted_at is null`.
 
+Owner-scoped active dataset listing is supported by a partial index on
+`(owner_id, created_at DESC, id DESC) where deleted_at is null`, matching the
+newest-first keyset pagination order.
+
 ### `dataset_versions`
 
 - `id uuid primary key`
